@@ -86,26 +86,26 @@ jobs:
       run: |
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
-    - name: 缓存编译环境
-      uses: actions/cache@v4
-      with:
-        path: |
-          openwrt/dl
-          openwrt/staging_dir/host
-          openwrt/staging_dir/toolchain
-          openwrt/.ccache
-        key: ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/.config') }}
-        restore-keys: |
-          ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-
-          ${{ runner.os }}-openwrt-24.10-
-
-
     - name: 加载自定义 feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
+
+
+    - name: 缓存编译环境
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/staging_dir/host
+          openwrt/staging_dir/tool
+          openwrt/.ccache
+        key: ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/.config') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-
+          ${{ runner.os }}-openwrt-24.10-
+    
 
     - name: 更新 feeds
       run:  |
