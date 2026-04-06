@@ -9,7 +9,14 @@ on:
         required: false
         default: 'false'
   schedule:
-        - cron: 0 5 * * 5
+    - cron: 0 5 * * 5
+
+permissions:
+  contents: write
+  actions: write
+  discussions: write
+  pages: write
+  id-token: write
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
@@ -22,18 +29,14 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  GITHUB_TOKEN: ${{ secrets.TOKEN }}
-permissions:
-      contents: write
-      actions: write
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
     - name: 准备完成
-      uses: actions/checkout@main
+      uses: actions/checkout@v4
 
     - name: 检查服务器配置
       run: |
@@ -65,7 +68,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: 安装 Go Stable
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@main
       with:
         go-version: 'stable'
         cache: false
@@ -75,7 +78,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        docker rmi $(docker images -q) 2>/dev/null
+        docker rmi $(docker images -q) 2>/dev/null || true
         sudo -E apt-get -qq update -y
         sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'  
         sudo -E apt-get -qq autoremove --purge
@@ -92,26 +95,12 @@ jobs:
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
-
-
-    - name: 缓存编译环境
-      uses: actions/cache@v4
-      with:
-        path: |
-          openwrt/staging_dir/host
-          openwrt/staging_dir/tool
-          openwrt/.ccache
-        key: ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/.config') }}
-        restore-keys: |
-          ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-
-          ${{ runner.os }}-openwrt-24.10-
     
-
     - name: 更新 feeds
       run:  |
           cd openwrt
           ./scripts/feeds update -a
-          
+          wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/immortalwrt/packages/refs/heads/master/lang/rust/Makefile
     - name: 安装 feeds
       run: |
           cd openwrt
@@ -128,11 +117,23 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
+    - name: 缓存编译环境
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/staging_dir/host
+          openwrt/staging_dir/tool
+          openwrt/.ccache
+        key: ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/.config') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-
+          ${{ runner.os }}-openwrt-24.10-
+          
     - name: Setup tmate session
-      uses: mxschmitt/action-tmate@v3
+      uses: mxschmitt/action-tmate@master
       if: github.event.inputs.ssh == 'true'
       with:
-        limit-access-to-actor: false # 允许通过 SSH 链接直接访问
+        limit-access-to-actor: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -192,41 +193,32 @@ jobs:
         touch release.txt
         echo "
         💻 路由: P&W R619AC 128M Immortalwrt
-
         📂 源码: ${{ env.REPO_URL }}
-
         🌳 分支: ${{ env.REPO_BRANCH }}
-
         ⏱️ 编译时间: $(date +"%Y年%m月%d日%H时%M分")
-
         🌐 管理地址: 192.168.1.1
-
         👤 用户名: root
-
         🔒 密码: 无密码 
-
         🚧 软件包-配置opkg-更新以下源
         src/gz openwrt_kiddin9 https://dl.openwrt.ai/latest/packages/arm_cortex-a7_neon-vfpv4/kiddin9
-        
         " >> release.txt
         echo "status=success" >> ${GITHUB_OUTPUT}
 
     - name: 自动发布固件到 Releases
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@master
       if: steps.tag.outputs.status == 'success' && !cancelled()
-      env:
-        GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
+        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: 删除运行记录
       uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 7
         keep_minimum_runs: 7
-        token: ${{ env.GITHUB_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: 删除自动发布的旧固件
       uses: dev-drprasad/delete-older-releases@master
@@ -234,21 +226,6 @@ jobs:
       with:
         keep_latest: 7
         delete_tags: true
-
-    - name: Delete Old Cache (删除旧缓存)
-      shell: bash
-      run: |
-        CACHE_PREFIX="${{ runner.os }}-openwrt-24.10-${{ env.REPO_BRANCH }}-"        
-        gh cache list --key "$CACHE_PREFIX" --json key --jq '.[] | .key' | while read -r key; do
-            echo "正在删除旧缓存: $key"
-            gh cache delete "$key"
-        done
-        
-        echo "旧缓存清理完成。"
-
-        echo "======== 当前本地缓存统计 ========"
-        [ -d "openwrt/dl" ] && echo "DL 文件夹: $(du -sh openwrt/dl | cut -f 1)"
-        [ -d "openwrt/.ccache" ] && echo "CCache 文件夹: $(du -sh openwrt/.ccache | cut -f 1)"
-        [ -d "openwrt/staging_dir" ] && echo "Staging Dir: $(du -sh openwrt/staging_dir | cut -f 1)"
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
